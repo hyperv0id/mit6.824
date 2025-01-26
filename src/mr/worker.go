@@ -64,7 +64,8 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			}
 		case WaitTask:
 			{
-				time.Sleep(time.Millisecond * 200) // sleep for 200ms
+				time.Sleep(time.Millisecond * 500) // sleep for 500ms
+				continue
 			}
 		case DoneTask:
 			{
@@ -82,7 +83,7 @@ func done(wid int, taskType TaskType, err error) {
 	reply := TaskReply{}
 	ok := call("Coordinator.FinishTask", &args, &reply)
 	if !ok {
-		log.Printf("call failed!\n")
+		log.Printf("%d call FinishTask failed!\n", wid)
 	}
 }
 

@@ -23,7 +23,7 @@ type TaskItem struct {
 type Coordinator struct {
 	// Your definitions here.
 	mu          sync.Mutex
-	mapID       int               // map任务ID
+	taskID      int               // 任务ID
 	nReduce     int               //reduce分块数量
 	mapfiles    chan string       // 文件队列
 	reducefiles []chan string     // 文件队列
@@ -51,21 +51,20 @@ func (c *Coordinator) DispatchTask(args *TaskArgs, reply *TaskReply) error {
 	var files []string
 	var ch chan string
 	var mytask *TaskItem
+	reply.TaskID = c.taskID
+	c.taskID++
 	if len(c.mapfiles) > 0 {
 		// 分配map任务
 		reply.TaskType = MapTask
 		ch = c.mapfiles
-		reply.TaskID = c.mapID
-		c.mapID++
-	} else if idx := c.getReduceTask(); idx != -1 {
-		// 分配reduce任务
-		reply.TaskType = ReduceTask
-		ch = c.reducefiles[idx]
-		reply.TaskID = idx
 	} else if len(c.tasks) > 0 {
 		// 等待任务完成
 		reply.TaskType = WaitTask
 		return nil
+	} else if idx := c.getReduceTask(); idx != -1 {
+		// 分配reduce任务
+		reply.TaskType = ReduceTask
+		ch = c.reducefiles[idx]
 	} else {
 		// 下班
 		reply.TaskType = DoneTask
@@ -81,20 +80,20 @@ func (c *Coordinator) DispatchTask(args *TaskArgs, reply *TaskReply) error {
 	}
 	reply.InputFiles = files
 	mytask = &TaskItem{TaskID: reply.TaskID, Files: files, Completed: false}
-	c.tasks[reply.TaskID] = mytask // 记录任务
+	c.tasks[mytask.TaskID] = mytask // 记录任务
 	// 超时处理
 	time.AfterFunc(10*time.Second, func() {
 		if mytask.Completed {
 			return
 		}
-		log.Printf("timeout: %d\n", reply.TaskID)
+		log.Printf("timeout: %d\n", mytask.TaskID)
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		// 超时，重新分配任务
 		for _, file := range mytask.Files {
 			c.mapfiles <- file
 		}
-		delete(c.tasks, reply.TaskID)
+		delete(c.tasks, mytask.TaskID)
 	})
 	log.Printf("Dispatch: id %d, type %d, files %v\n", reply.TaskID, reply.TaskType, files)
 	return nil
