@@ -40,6 +40,8 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
+	log.SetPrefix("w_" + fmt.Sprint(os.Getpid()) + " ")
+	log.SetFlags(0)
 
 	ok := true
 	for ok {
@@ -50,27 +52,18 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		if !ok {
 			log.Printf("call failed!\n")
 		}
-		log.Printf("%d got task %d type %v\n", pid, reply.TaskID, reply.TaskType)
 
 		var err error
 		switch reply.TaskType {
 		case MapTask:
-			{
-				err = do_map(reply, mapf)
-			}
+			err = do_map(&reply, mapf)
 		case ReduceTask:
-			{
-				err = do_reduce(reply, reducef)
-			}
+			err = do_reduce(&reply, reducef)
 		case WaitTask:
-			{
-				time.Sleep(time.Millisecond * 500) // sleep for 500ms
-				continue
-			}
+			time.Sleep(time.Second)
+			continue
 		case DoneTask:
-			{
-				os.Exit(0)
-			}
+			os.Exit(0)
 		}
 		done(reply.TaskID, reply.TaskType, err)
 	}
@@ -88,8 +81,8 @@ func done(wid int, taskType TaskType, err error) {
 }
 
 // 执行map逻辑，读文件并分块保存到 mr-out-{taskID}-{reduceID}.txt 中
-func do_map(reply TaskReply, mapf func(string, string) []KeyValue) error {
-	log.Printf("%d map %v\n", reply.TaskID, reply.InputFiles)
+func do_map(reply *TaskReply, mapf func(string, string) []KeyValue) error {
+	log.Printf("%d[%d] do_map %v\n", os.Getpid(), reply.TaskID, reply.InputFiles)
 	intermediate := []KeyValue{}
 	for _, fn := range reply.InputFiles {
 		file, err := os.Open(fn)
@@ -143,8 +136,8 @@ func do_map(reply TaskReply, mapf func(string, string) []KeyValue) error {
 }
 
 // 执行reduce逻辑，
-func do_reduce(reply TaskReply, reducef func(string, []string) string) error {
-	log.Printf("%d reduce %v\n", reply.TaskID, reply.InputFiles)
+func do_reduce(reply *TaskReply, reducef func(string, []string) string) error {
+	log.Printf("%d[%d] do_reduce %v\n", os.Getpid(), reply.TaskID, reply.InputFiles)
 	kva := []KeyValue{}
 	for _, fn := range reply.InputFiles {
 		file, err := os.Open(fn)

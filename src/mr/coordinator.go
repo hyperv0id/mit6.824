@@ -18,6 +18,7 @@ type TaskItem struct {
 	TaskID    int
 	Files     []string
 	Completed bool
+	TaskType  TaskType
 }
 
 type Coordinator struct {
@@ -88,19 +89,23 @@ func (c *Coordinator) DispatchTask(args *TaskArgs, reply *TaskReply) error {
 		}
 	}
 	reply.InputFiles = files
-	mytask = &TaskItem{TaskID: reply.TaskID, Files: files, Completed: false}
+	mytask = &TaskItem{TaskID: reply.TaskID, Files: files, Completed: false, TaskType: reply.TaskType}
 	c.tasks[mytask.TaskID] = mytask // 记录任务
 	// 超时处理
 	time.AfterFunc(10*time.Second, func() {
 		if mytask.Completed {
 			return
 		}
-		log.Printf("timeout: %d\n", mytask.TaskID)
 		c.mu.Lock()
 		defer c.mu.Unlock()
+		log.Printf("timeout: %d\n", mytask.TaskID)
 		// 超时，重新分配任务
-		for _, file := range mytask.Files {
-			c.mapfiles <- file
+		if mytask.TaskType == MapTask {
+			for _, file := range mytask.Files {
+				c.mapfiles <- file
+			}
+		} else if mytask.TaskType == ReduceTask {
+			c.makeReduce(mytask.Files, -1)
 		}
 		delete(c.tasks, mytask.TaskID)
 	})
@@ -117,6 +122,24 @@ func (c *Coordinator) getReduceTask() int {
 	return -1
 }
 
+// makeReduce 根据文件名分配reduce任务，筛选mapid一致的文件
+func (c *Coordinator) makeReduce(filenames []string, mapid int) {
+	pattern := regexp.MustCompile(`^mr-(\d+)-(\d+)$`)
+	for _, filename := range filenames {
+		matches := pattern.FindStringSubmatch(filename)
+		if len(matches) == 3 {
+			mid, _ := strconv.Atoi(matches[1])
+			if mapid != -1 && mid != mapid {
+				continue
+			}
+			rid, _ := strconv.Atoi(matches[2])
+			if rid < c.nReduce {
+				c.reducefiles[rid] <- filename
+			}
+		}
+	}
+}
+
 // FinishTask 任务完成
 func (c *Coordinator) FinishTask(args *FinishArgs, reply *TaskReply) error {
 	c.mu.Lock()
@@ -126,29 +149,15 @@ func (c *Coordinator) FinishTask(args *FinishArgs, reply *TaskReply) error {
 	if task == nil {
 		return fmt.Errorf("task %d not found", args.TaskID)
 	}
-	makeReduce := func(filename string, mapid int) {
-		pattern := regexp.MustCompile(`^mr-(\d+)-(\d+)$`)
-		matches := pattern.FindStringSubmatch(filename)
-		if len(matches) == 3 {
-			mid, _ := strconv.Atoi(matches[1])
-			if mid != -1 && mid != mapid {
-				return
-			}
-			rid, _ := strconv.Atoi(matches[2])
-			if rid < c.nReduce {
-				c.reducefiles[rid] <- filename
-			}
-		}
-	}
 
 	if args.Err != nil {
 		// 任务失败，重新添加文件
-		for _, file := range task.Files {
-			if args.TaskType == MapTask {
+		if args.TaskType == MapTask {
+			for _, file := range task.Files {
 				c.mapfiles <- file
-			} else if args.TaskType == ReduceTask {
-				makeReduce(file, -1)
 			}
+		} else if args.TaskType == ReduceTask {
+			c.makeReduce(task.Files, -1)
 		}
 		return nil
 	}
@@ -158,15 +167,17 @@ func (c *Coordinator) FinishTask(args *FinishArgs, reply *TaskReply) error {
 	if args.TaskType == MapTask {
 		dir, _ := os.Getwd()
 		// 获取符合条件的文件名，用作reduce任务的输入
+		filenames := make([]string, 0)
 		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
 			if !info.IsDir() {
-				makeReduce(info.Name(), args.TaskID)
+				filenames = append(filenames, info.Name())
 			}
 			return nil
 		})
+		c.makeReduce(filenames, args.TaskID)
 	}
 	if len(c.tasks) == 0 && len(c.mapfiles) == 0 {
 		// 所有map任务完成，开始reduce任务
@@ -195,22 +206,27 @@ func (c *Coordinator) Done() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// 所有reduce任务完成
-	reduced := true
+	reduced := c.progress == "reduce"
 	for _, ch := range c.reducefiles {
 		if len(ch) > 0 {
 			reduced = false
 			break
 		}
 	}
-	// Your code here.
+	isdone := len(c.mapfiles) == 0 && reduced && len(c.tasks) == 0
+	if isdone {
+		log.Printf("!!!!!!!!!!!!!!!!!!!!! coordinator done!!!!!!!!!!\n")
+	}
 	// 没有待处理文件 且 没有任务在运行
-	return len(c.mapfiles) == 0 && reduced && len(c.tasks) == 0
+	return isdone
 }
 
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
+	log.SetPrefix("c_" + fmt.Sprint(os.Getpid()) + " ")
+	log.SetFlags(0)
 	c := Coordinator{}
 	log.Printf("coordinator: reduce %d, files %d\n", nReduce, len(files))
 	// Your code here.
