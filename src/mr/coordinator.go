@@ -28,7 +28,7 @@ type Coordinator struct {
 	mapfiles    chan string       // 文件队列
 	reducefiles []chan string     // 文件队列
 	tasks       map[int]*TaskItem // 实时任务表
-	// tasks       chan *TaskItem // 任务队列
+	progress    string            // 进度 map/reduce
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -53,20 +53,29 @@ func (c *Coordinator) DispatchTask(args *TaskArgs, reply *TaskReply) error {
 	var mytask *TaskItem
 	reply.TaskID = c.taskID
 	c.taskID++
-	if len(c.mapfiles) > 0 {
+
+	switch c.progress {
+	case "map":
 		// 分配map任务
-		reply.TaskType = MapTask
-		ch = c.mapfiles
-	} else if len(c.tasks) > 0 {
-		// 等待任务完成
-		reply.TaskType = WaitTask
-		return nil
-	} else if idx := c.getReduceTask(); idx != -1 {
-		// 分配reduce任务
-		reply.TaskType = ReduceTask
-		ch = c.reducefiles[idx]
-	} else {
-		// 下班
+		if len(c.mapfiles) > 0 {
+			reply.TaskType = MapTask
+			ch = c.mapfiles
+		} else {
+			reply.TaskType = WaitTask
+			return nil
+		}
+	case "reduce":
+		{
+			if idx := c.getReduceTask(); idx != -1 {
+				// 分配reduce任务
+				reply.TaskType = ReduceTask
+				ch = c.reducefiles[idx]
+			} else {
+				reply.TaskType = WaitTask
+				return nil
+			}
+		}
+	default:
 		reply.TaskType = DoneTask
 		return nil
 	}
@@ -159,6 +168,10 @@ func (c *Coordinator) FinishTask(args *FinishArgs, reply *TaskReply) error {
 			return nil
 		})
 	}
+	if len(c.tasks) == 0 && len(c.mapfiles) == 0 {
+		// 所有map任务完成，开始reduce任务
+		c.progress = "reduce"
+	}
 	return nil
 }
 
@@ -204,6 +217,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.mu = sync.Mutex{}
 	c.nReduce = nReduce
 	c.mapfiles = make(chan string, len(files))
+	c.progress = "map" // wait for workers to register
 	// reduce任务分桶处理
 	c.reducefiles = make([]chan string, nReduce)
 	for i := 0; i < nReduce; i++ {
