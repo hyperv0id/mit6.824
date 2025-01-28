@@ -17,27 +17,38 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 
 type KVServer struct {
 	mu sync.Mutex
-
+	store map[string]string
 	// Your definitions here.
 }
 
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	// TODO: Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	reply.Value = kv.store[args.Key]
 }
 
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	// TODO: Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	kv.store[args.Key] = args.Value
+	reply.Value = kv.store[args.Key]
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	// TODO: Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	reply.Value = kv.store[args.Key]
+	kv.store[args.Key] += args.Value
 }
 
 func StartKVServer() *KVServer {
 	kv := new(KVServer)
-
-	// You may need initialization code here.
+	kv.store = make(map[string]string)
+	// TODO: You may need initialization code here.
 
 	return kv
 }
